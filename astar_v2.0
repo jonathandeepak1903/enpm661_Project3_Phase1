@@ -1,0 +1,348 @@
+import cv2
+import numpy as np
+import heapq
+import time
+
+# Define colors
+BLACK = (0, 0, 0)
+RED = (0, 0, 255)
+GREEN = (0, 255, 0)
+BLUE = (255, 0, 0)
+YELLOW = (0, 255, 255)
+
+# Define actions
+ACTIONS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)]
+COSTS = [1.0, 1.0, 1.0, 1.0, 1.4, 1.4, 1.4, 1.4]
+
+
+# Step 2: Generate map with clearance
+def generate_map(clearance=5):
+    print("generating map")
+    canvas = np.ones((550, 1250, 3), dtype="uint8") * 255  # White background
+
+    # Draw wall
+    cv2.rectangle(canvas, (0, 0), (1200, 500), BLACK, 1)
+
+    # Draw obstacles
+    cv2.rectangle(canvas, (100 - clearance, 0), (175 + clearance, 400 + clearance), RED, -1)  # Upper Rectangle
+    cv2.rectangle(canvas, (275 - clearance, 500), (350 + clearance, 100 + clearance), RED, -1)  # Lower Rectangle
+    # Hexagon
+    vertices = np.array([[650 - clearance, 100 - clearance], [800 + clearance, 175 - clearance],
+                         [800 + clearance, 325 + clearance], [650 + clearance, 400 + clearance],
+                         [500 - clearance, 325 + clearance], [500 - clearance, 175 - clearance]], dtype=np.int32)
+    cv2.fillPoly(canvas, [vertices], RED)
+    # Letter C
+    cv2.rectangle(canvas, (1020 - clearance, 50 - clearance), (1100 + clearance, 450 + clearance), RED, -1)
+    cv2.rectangle(canvas, (900 - clearance, 375 - clearance), (1020 + clearance, 450 + clearance), RED, -1)
+    cv2.rectangle(canvas, (900 - clearance, 50 - clearance), (1020 + clearance, 125 + clearance), RED, -1)
+    # cv2.imshow('canvas', canvas)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    print("map generated")
+    return canvas
+
+
+def heuristic2(node, goal):
+    return np.sqrt((goal[0] - node[0]) * 2 + (goal[1] - node[1]) * 2)
+
+
+def heuristic(node, goal):
+    return np.sqrt((goal[0] - node[0]) * 2 + (goal[1] - node[1]) * 2)
+
+
+def astar(start, goal, canvas, clearance=5):
+    print("A* Algorithm started to find path")
+    open_list = []
+    closed_list = set()
+    parent = {}
+    cost_to_come = {}
+    explored_nodes = []  # List to store explored nodes
+
+    heapq.heappush(open_list, (0, start))
+    cost_to_come[start] = 0
+    parent[start] = None
+
+    height, width, _ = canvas.shape
+
+    while open_list:
+        current_cost, current_node = heapq.heappop(open_list)
+        explored_nodes.append(current_node)  # Add the current node to the explored nodes
+
+        if current_node == goal:
+            backtrack_path = []
+            node = goal
+            while node is not None:
+                backtrack_path.append(node)
+                node = parent[node]
+            backtrack_path.reverse()
+            return backtrack_path, explored_nodes
+
+        closed_list.add(current_node)
+
+        for action, cost in zip(ACTIONS, COSTS):
+            next_node = (current_node[0] + action[0], current_node[1] + action[1])
+
+            # Check if the next node is within the canvas boundaries
+            if (0 <= next_node[0] < width) and (0 <= next_node[1] < height) and (
+                    next_node not in closed_list
+            ) and not is_obstacle(next_node, clearance):
+
+                new_cost = current_cost + cost
+                heuristic_cost = new_cost + heuristic(next_node, goal)
+
+                if next_node not in [node[1] for node in open_list]:
+                    cost_to_come[next_node] = new_cost
+                    parent[next_node] = current_node
+                    heapq.heappush(open_list, (heuristic_cost, next_node))
+                elif new_cost < cost_to_come[next_node]:
+                    cost_to_come[next_node] = new_cost
+                    parent[next_node] = current_node
+                    open_list = [
+                        (cost, node) if node != next_node else (heuristic_cost, next_node)
+                        for cost, node in open_list
+                    ]
+                    heapq.heapify(open_list)
+
+    return [], []
+
+
+def astar2(start, goal, clearance=5):
+    if start == goal:
+        return [start, goal], [start, goal], 0 + 1
+    closed = set()
+    fval = heuristic(start, goal)
+    fringe = [(fval, start, 0)]  # fval = estimated cost to goal, start = current node 0 = depth (cost so far)
+    path = {start: None}
+    while fringe:
+        fval, state, depth = heapq.heappop(fringe)
+        if state == goal:
+            return path, closed, fval + 1
+        if state not in closed:
+            closed.add(state)
+            for action, cost in zip(ACTIONS, COSTS):
+                next_node = (state[0] + action[0], state[1] + action[1])
+                if next_node not in closed and not is_obstacle(next_node):
+                    fval = depth + heuristic(next_node, goal)
+                    heapq.heappush(fringe, (fval, next_node, depth + cost))
+                    path[next_node] = state
+    return None
+
+
+def is_obstacle(node, clearance=5):
+    x, y = node
+    height = 500
+    width = 1200
+    # Wall
+    if y <= clearance or y >= height - clearance or x <= clearance or x >= width - clearance:
+        return True
+
+    # Upper Rectangle
+    if (100 - clearance <= x <= 175 + clearance) and (0 - clearance <= y <= 400 + clearance):
+        return True
+
+    # Lower Rectangle
+    if (275 - clearance <= x <= 350 + clearance) and (100 - clearance <= y <= 500 + clearance):
+        return True
+
+    # Hexagon
+    hexagon_vertices = np.array([[650 - clearance, 100 - clearance], [800 + clearance, 175 - clearance],
+                                 [800 + clearance, 325 + clearance], [650 + clearance, 400 + clearance],
+                                 [500 - clearance, 325 + clearance], [500 - clearance, 175 - clearance]])
+    n = len(hexagon_vertices)
+    inside = False
+    for i in range(n):
+        j = (i + 1) % n
+        v1 = hexagon_vertices[i]
+        v2 = hexagon_vertices[j]
+        if (v2[1] > y) != (v1[1] > y) and x < (v1[0] - v2[0]) * (y - v1[1]) / (v1[1] - v2[1]) + v1[0]:
+            inside = not inside
+    if inside:
+        return True
+
+    # Letter C
+
+    # Rectangle 3
+    if (1020 - clearance <= x <= 1100 + clearance) and (50 - clearance <= y <= 450 + clearance):
+        return True
+
+    # Rectangle 4
+    if (900 - clearance <= x <= 1020 + clearance) and (375 - clearance <= y <= 450 + clearance):
+        return True
+
+    # Rectangle 5
+    if (900 - clearance <= x <= 1020 + clearance) and (50 - clearance <= y <= 125 + clearance):
+        return True
+
+    return False
+
+
+def visualize_path2(canvas, path, explored_nodes):
+    print("Video generation started")
+    height, width, _ = canvas.shape
+    # Save animation as a video
+    out = cv2.VideoWriter("optimal_path.mp4", cv2.VideoWriter_fourcc(*"mp4v"), 10000, (width, height))
+    video_start_time = time.time()
+    # Define a frame counter
+    frame_counter = 0
+
+    # Draw explored nodes
+    for node in explored_nodes:
+        cv2.circle(canvas, node, 1, BLUE, -1)
+
+        # Write the frame if the counter is divisible by 11 (1 frame + 10 skips)
+        if frame_counter % 11 == 0:
+            out.write(canvas)
+
+        # Increment the frame counter
+        frame_counter += 1
+
+    # Draw the path
+    for i in range(1, len(path)):
+        cv2.line(canvas, path[i - 1], path[i], BLACK, 10)
+        # Draw the initial frame
+        out.write(canvas)
+
+    # Move the robot along the path
+    for i, node in enumerate(path):
+        # Draw the robot as a bright yellow circle
+        cv2.circle(canvas, node, 5, YELLOW, -1)
+
+        # Save the frame
+        out.write(canvas)
+
+        cv2.waitKey(50)  # Adjust the delay as needed to control the speed of the animation
+        # Clear the robot's previous position
+        cv2.circle(canvas, node, 5, BLACK, -1)
+
+    # Show the frame
+    cv2.imshow("a* Optimal Path", canvas)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    out.release()
+
+    video_end_time = time.time()  # Stop measuring time
+    time_taken = video_end_time - video_start_time
+    print("Video generation completed in {:.2f} seconds".format(time_taken))
+
+
+def visualize_path(canvas, path, explored_nodes, start, goal):
+    print("Video generation started")
+    height, width, _ = canvas.shape
+    # Save animation as a video
+    out = cv2.VideoWriter("optimal_path.mp4", cv2.VideoWriter_fourcc(*"mp4v"), 10000, (width, height))
+    video_start_time = time.time()
+    # Define a frame counter
+    frame_counter = 0
+
+    # Draw explored nodes
+    for node in explored_nodes:
+        cv2.circle(canvas, node, 1, BLUE, -1)
+
+        # Write the frame if the counter is divisible by 11 (1 frame + 10 skips)
+        if frame_counter % 11 == 0:
+            out.write(canvas)
+
+        # Increment the frame counter
+        frame_counter += 1
+
+    # Draw the path
+    current_node = goal
+    while current_node is not None:
+        parent_node = path[current_node]
+        if parent_node is not None:
+            cv2.line(canvas, parent_node, current_node, BLACK, 10)
+            # Draw the initial frame
+            out.write(canvas)
+        current_node = parent_node
+
+    # Move the robot along the path
+    # current_node = start
+    # while current_node is not None:
+    #     # Draw the robot as a bright yellow circle
+    #     cv2.circle(canvas, current_node, 5, YELLOW, -1)
+
+    #     # Save the frame
+    #     out.write(canvas)
+
+    #     cv2.waitKey(50)  # Adjust the delay as needed to control the speed of the animation
+    #     # Clear the robot's previous position
+    #     cv2.circle(canvas, current_node, 5, BLACK, -1)
+
+    #     current_node = forward_path[current_node]
+
+    # Show the frame
+    cv2.imshow("a* Optimal Path", canvas)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    out.release()
+
+    video_end_time = time.time()  # Stop measuring time
+    time_taken = video_end_time - video_start_time
+    print("Video generation completed in {:.2f} seconds".format(time_taken))
+
+
+def construct_path(path_dict):
+    return {parent: child for child, parent in path_dict.items()}
+
+
+# Main function
+def main():
+    # Enter start and goal point
+    start_x, start_y = map(int, input("Enter start x and y coordinates separated by a comma (x, y): ").split(','))
+    # print(start_x, start_y)
+    start = (start_x, start_y)
+
+    goal_x, goal_y = map(int, input("Enter goal x and y coordinates separated by a comma (x, y): ").split(','))
+    # print(goal_x, goal_y)
+    goal = (goal_x, goal_y)
+
+    # Alternate way to enter start and goal points
+
+    # start_x = int(input("Enter starting x coordinate: "))
+    # start_y = int(input("Enter starting y coordinate: "))
+    # start = (start_x, start_y)
+    # print(start_x, start_y)
+    # goal_x = int(input("Enter goal x coordinate: "))
+    # goal_y = int(input("Enter goal y coordinate: "))
+    # goal = (goal_x, goal_y)
+    # print(goal_x, goal_y)
+
+    # Call Function to create obstacle map
+    canvas = generate_map()
+
+    if (
+            canvas[start_y, start_x, :].tolist() == RED
+            or canvas[goal_y, goal_x, :].tolist() == RED
+    ):
+        print("Invalid start or goal coordinates. Please try again.")
+        return
+
+    # Function call to start counting time
+    start_time = time.time()
+    print("time started")
+
+    # Function call to start running dijkstra algorith with given start and goal points on map(canvas)
+    path, explored_nodes = astar(start, goal, canvas)
+
+    # Command to stop counting time
+    end_time = time.time()
+    print("time stopped")
+
+    # Condition to check if path is formed from start to goal
+    if not path:
+        print("No path found between start and goal.")
+    else:
+        # Calculate time required to form path by using time function
+        print(f"Path found in {end_time - start_time:.2f} seconds.")
+
+        # Calculate the cost of the path
+        path_cost = sum(COSTS[ACTIONS.index((path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]))] for i in
+                        range(len(path) - 1))
+        print(f"Cost of the path: {path_cost}")
+
+        # Function call to to generate video output
+        # visualize_path(canvas, path, explored_nodes)
+
+
+if __name__ == "__main__":
+    main()
